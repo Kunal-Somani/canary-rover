@@ -3,7 +3,6 @@
 
 > **Mechanical Engineering Capstone Project**  
 > Thapar Institute of Engineering and Technology, Patiala  
-> Internal Evaluation 3 & 4 — March–April 2026
 
 ---
 
@@ -287,5 +286,4 @@ LinkedIn: [kunal-somani-227373344](https://www.linkedin.com/in/kunal-somani-2273
 
 ---
 
-*Mechanical Engineering Department — Thapar Institute of Engineering and Technology, Patiala*  
-*Internal Evaluation 3 & 4 | March – April 2026*
+
