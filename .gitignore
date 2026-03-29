@@ -1,0 +1,7 @@
+canary_rover_ws/build/
+canary_rover_ws/install/
+canary_rover_ws/log/
+**/__pycache__/
+*.pyc
+*.egg-info/
+.vscode/
