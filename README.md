@@ -280,7 +280,7 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 ## Contributors
 
-**Kunal Somani** — ROS2 Simulation (RPLiDAR · IMU · Encoded Motor nodes)  
+*Kunal*
 GitHub: [Kunal-Somani](https://github.com/Kunal-Somani)  
 LinkedIn: [kunal-somani-227373344](https://www.linkedin.com/in/kunal-somani-227373344)
 
