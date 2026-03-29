@@ -1,4 +1,4 @@
-# 🐦 The Canary Rover
+# The Canary Rover
 ### Autonomous Mobile Scout for Pre-Entry Hazardous Inspection
 
 > **Mechanical Engineering Capstone Project**  
@@ -7,19 +7,7 @@
 
 ---
 
-## 👥 Team Members
-
-| Name | Role |
-|------|------|
-| Chhavi | — |
-| Ujjwal Aggarwal | — |
-| Pradyumna Singh | — |
-| Sparsh Agarwal | — |
-| Kunal Somani | ROS2 Simulation (LiDAR · IMU · Motor Encoder) |
-
----
-
-## 🧭 Project Overview
+## Project Overview
 
 The Canary Rover is an autonomous ground vehicle designed to perform **pre-entry hazardous inspection in underground coal mines** — eliminating the need for human entry into potentially fatal gas environments.
 
@@ -38,30 +26,32 @@ Recent incidents include the East Jaintia Hills disaster (Feb 2026, 27 deaths) a
 
 ---
 
-## 🏗️ Repository Structure
+## Repository Structure
 
 ```
 canary-rover/
-├── src/
-│   └── canary_rover_sim/           ← ROS2 simulation package (Kunal)
-│       ├── canary_rover_sim/
-│       │   ├── lidar_sim.py        ← RPLiDAR A1M8 simulation
-│       │   ├── imu_sim.py          ← MPU6050 IMU simulation
-│       │   └── motor_encoder_sim.py← 4× BLDC motor + torque control
-│       ├── launch/
-│       │   └── full_sim.launch.py  ← launches all 3 nodes together
-│       ├── package.xml
-│       └── setup.py
-├── rl_model/                       ← Reinforcement Learning navigation (teammates)
-├── cad/                            ← SolidWorks CAD models (teammates)
-├── electronics/                    ← PCB, circuit diagrams (teammates)
-├── docs/                           ← Reports, evaluation forms
+├── canary_rover_ws/                    <- ROS2 simulation workspace
+│   └── src/
+│       └── canary_rover_sim/
+│           ├── canary_rover_sim/
+│           │   ├── lidar_sim.py        <- RPLiDAR A1M8 simulation
+│           │   ├── imu_sim.py          <- MPU6050 IMU simulation
+│           │   └── motor_encoder_sim.py<- 4x BLDC motor + torque control
+│           ├── launch/
+│           │   └── full_sim.launch.py  <- launches all 3 nodes together
+│           ├── package.xml
+│           └── setup.py
+├── rl_model/                           <- Reinforcement Learning navigation
+├── cad/                                <- SolidWorks CAD models
+├── electronics/                        <- PCB, circuit diagrams
+├── docs/                               <- Reports, evaluation forms
+├── .gitignore
 └── README.md
 ```
 
 ---
 
-## 🤖 ROS2 Simulation — Kunal's Work
+## ROS2 Simulation
 
 This module contains three ROS2 Humble simulation nodes that replicate the rover's physical sensor and actuator behaviour in software, allowing full input/output testing without hardware.
 
@@ -148,9 +138,10 @@ Simulates four independently driven BLDC motors with quadrature encoders. Reads 
 | Parameter | Value |
 |-----------|-------|
 | Encoder resolution | 1000 ticks/rev |
-| Wheel radius | 60 mm |
+| Tyre diameter | 20–30 cm (for uneven and rocky terrain) |
+| Wheel radius (sim) | 100–150 mm |
 | Track width | 350 mm |
-| Rover mass | 8 kg |
+| Rover mass | 12–15 kg |
 | Max torque | 5.0 Nm per motor |
 | Max RPM | 150 RPM |
 | Control rate | 50 Hz |
@@ -164,7 +155,7 @@ Simulates four independently driven BLDC motors with quadrature encoders. Reads 
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -178,7 +169,7 @@ Simulates four independently driven BLDC motors with quadrature encoders. Reads 
 ```bash
 # Clone the repository
 git clone https://github.com/Kunal-Somani/canary-rover.git
-cd canary-rover
+cd canary-rover/canary_rover_ws
 
 # Build the ROS2 package
 source /opt/ros/humble/setup.bash
@@ -240,22 +231,24 @@ rqt_graph
 
 ---
 
-## 📋 Design Specifications (from Survey)
+## Design Specifications (from Survey)
 
 | Requirement | Specification |
 |-------------|---------------|
 | Climb angle | 25°–30° |
+| Tyre diameter | 20–30 cm |
+| Rover mass | 12–15 kg |
 | Ground clearance | ~15 cm on rocky terrain |
-| Communication range | ≥ 200 m line-of-sight |
+| Communication range | >= 200 m line-of-sight |
 | Surface temperature limit | < 85°C |
 | Enclosure rating | IP54 or higher |
 | Safe methane operation | Up to 5% vol |
-| Gas detection | CH₄, CO, NOx |
+| Gas detection | CH4, CO, NOx |
 | Certification | IS/IEC 60079-11 (Intrinsic Safety) |
 
 ---
 
-## 📐 Mechanical Design
+## Mechanical Design
 
 Three design iterations were evaluated using a weighted decision matrix:
 
@@ -265,11 +258,11 @@ Three design iterations were evaluated using a weighted decision matrix:
 | Tank Climber (triangular tracked base) | 3.71 |
 | **ATV 4-Wheeler with bevel gear differential** ✅ | **4.08** |
 
-The **4-wheel all-terrain UGV with 4WD** was selected for best balance of cost, ease of implementation, certification feasibility, and terrain performance.
+The **4-wheel all-terrain UGV with 4WD** was selected for best balance of cost, ease of implementation, certification feasibility, and terrain performance. Large diameter tyres (20–30 cm) are used specifically to handle rocky mine terrain and maintain the required ~15 cm ground clearance under a 12–15 kg rover.
 
 ---
 
-## ⚖️ Regulatory Compliance
+## Regulatory Compliance
 
 | Standard | Requirement |
 |----------|-------------|
@@ -280,9 +273,17 @@ The **4-wheel all-terrain UGV with 4WD** was selected for best balance of cost, 
 
 ---
 
-## 📄 License
+## License
 
 Licensed under the [Apache License 2.0](LICENSE).
+
+---
+
+## Contributors
+
+**Kunal Somani** — ROS2 Simulation (RPLiDAR · IMU · Encoded Motor nodes)  
+GitHub: [Kunal-Somani](https://github.com/Kunal-Somani)  
+LinkedIn: [kunal-somani-227373344](https://www.linkedin.com/in/kunal-somani-227373344)
 
 ---
 
