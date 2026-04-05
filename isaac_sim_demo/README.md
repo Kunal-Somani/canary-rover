@@ -15,7 +15,7 @@ This upgrades the previous ROS2 text-only simulation to a complete **visual work
 
 ## Demo Preview
 
-![Simulation Overview](simulation_overview.png)
+![Simulation Overview](canary_rover_journey_flowchart.png)
 
 ---
 
