@@ -15,7 +15,7 @@ This upgrades the previous ROS2 text-only simulation to a complete **visual work
 
 ## Demo Preview
 
-![Simulation Overview](canary_rover_journey_flowchart.png)
+![Simulation Overview](canary_rover_architecture.png)
 
 ---
 
@@ -94,5 +94,5 @@ cd ~/isaac
 
 ## Development Journey
 
-See `canary_rover_journey_flowchart.png` for the complete step-by-step workflow
+See `canary_rover_architecture.png` for the complete step-by-step workflow
 of how this simulation was built from scratch in one session.
