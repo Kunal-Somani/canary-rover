@@ -8,7 +8,7 @@ Mechanical Engineering Capstone Project — Thapar Institute of Engineering & Te
 
 ## System Pipeline
 
-![Canary Rover System Pipeline](isaac_sim_demo/canary_rover_pipeline.png)
+![Canary Rover System Pipeline](canary_rover_pipeline.png)
 
 ---
 
