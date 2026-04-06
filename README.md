@@ -87,3 +87,4 @@ cd ~/isaac
 | Kunal Somani | [Kunal-Somani](https://github.com/Kunal-Somani) |
 | Ujjwal | [ujjwx1](https://github.com/ujjwx1) |
 | Chhavi | [Chhavi223](https://github.com/Chhavi223) |
+| Pradyumna | [ACPradyumna05](https://github.com/ACPradyumna05) |
