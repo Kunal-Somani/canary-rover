@@ -1,4 +1,4 @@
-# The Canary Rover
+# The Canary Rover 
 
 **Autonomous Mobile Scout for Pre-Entry Hazardous Mine Inspection**  
 Mechanical Engineering Capstone Project — Thapar Institute of Engineering & Technology
