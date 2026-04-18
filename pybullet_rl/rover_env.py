@@ -4,13 +4,63 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 
+# ============================================================
+# PHYSICS & DIMENSION CONFIG
+# ============================================================
+ROAD_THICKNESS  = 0.3
+ROAD_Z_TOP      = 2.0
+ROAD_Z_CENTER   = ROAD_Z_TOP - ROAD_THICKNESS / 2
+
+SECTION_LEN     = 25.0
+NUM_SECTIONS    = 5
+FINISH_X        = SECTION_LEN * NUM_SECTIONS
+
+ROVER_START     = [2.0, 0.0, 2.7]
+
+WALL_W_S3 = 2.0
+WALL_W_S4 = 1.6
+WALL_W_S5 = 1.0
+
+WALL_HEIGHT = 1.0
+WALL_THICK  = 0.15
+
+# REWARD SCALES
+FORWARD_SCALE   = 15.0
+LATERAL_SCALE   = 1.0
+STABILITY_SCALE = 0.2
+YAW_RATE_SCALE  = 0.2
+ACTION_SMOOTH   = 0.05
+SURVIVAL_BONUS  = 0.1
+STALL_PENALTY   = 1.0
+
+WALL_HIT_ONCE   = 20.0
+WALL_HIT_ACCUM  = 5.0
+WALL_HARD_FAIL  = 80.0
+
+FALL_PENALTY    = 20.0
+FINISH_REWARD   = 300.0
+
+MAX_STEPS       = 800
+TORQUE_SCALE    = 40.0
+TORQUE_RAMP     = 0.25
+
+# ============================================================
+# CURRICULUM THRESHOLDS
+#   Synchronized with train.py logic
+# ============================================================
+CURRICULUM_THRESHOLDS = {
+    0: dict(mean=200.0, std=200.0, stable_episodes=50),
+    1: dict(mean=350.0, std=250.0, stable_episodes=50),
+    2: dict(mean=400.0, std=300.0, stable_episodes=0), # Final level
+}
 
 class RoverEnv(gym.Env):
 
-    def __init__(self, render=True):
+    def __init__(self, render=False, random_level=0):
         super().__init__()
 
-        self.render = render
+        self._render     = render
+        self.random_level = random_level  # 0=fixed, 1=mild, 2=full
 
         if render:
             p.connect(p.GUI)
@@ -20,252 +70,238 @@ class RoverEnv(gym.Env):
 
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
-        self.action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(8,), dtype=np.float32)
+        # Observation: [x, y, z, roll, pitch, vx, vy, yaw_rate]
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(8,), dtype=np.float32)
+        
+        # Action: [left_torque, right_torque]
+        self.action_space = spaces.Box(
+            low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
 
-        self.robot = None
-        self.bootstrap_steps = 0
+        self.robot           = None
+        self.joint_map       = {}
+        self.wall_ids        = []
 
-        self.length = 60
-        self.finish_x = 55
+        self.prev_x             = 0.0
+        self.prev_action        = np.zeros(2, dtype=np.float32)
+        self.wall_contact_steps = 0
+        self.current_step       = 0
+        self.prev_checkpoint    = 0
 
-        self.prev_x = 0
+    # ── Curriculum API ──────────────────────────────────────────
 
+    def set_random_level(self, level: int):
+        """Called by CurriculumCallback to increase difficulty."""
+        assert level in (0, 1, 2), f"Level {level} out of bounds (0-2)"
+        self.random_level = level
+
+    # ── Reset & Build ───────────────────────────────────────────
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
         p.resetSimulation()
         p.setGravity(0, 0, -9.8)
+        p.setPhysicsEngineParameter(fixedTimeStep=1/480, numSolverIterations=300)
 
-        p.setPhysicsEngineParameter(
-            fixedTimeStep=1/240,
-            numSolverIterations=300
-        )
+        self._build_road()
+        self._build_bumps()
+        self._build_walls()
+        self._build_finish_line()
 
-        self._create_floor()
-        self._create_tunnel()
-        self._create_finish_line()  # 🔴 ADD THIS
-
-        self.robot = p.loadURDF("vleg_rover.urdf", [-2, 0, 0.7])
-
+        self.robot = p.loadURDF(
+            "vleg_rover.urdf", ROVER_START,
+            flags=p.URDF_USE_INERTIA_FROM_FILE)
+        
         self.joint_map = self._get_joint_map()
 
+        # Randomize wheel friction slightly for robustness
+        friction = np.random.uniform(0.8, 1.2)
         for j in self._all_wheels():
             p.setJointMotorControl2(self.robot, j, p.VELOCITY_CONTROL, force=0)
-            p.changeDynamics(self.robot, j, lateralFriction=1.0)
+            p.changeDynamics(self.robot, j, lateralFriction=friction)
 
+        # Let physics settle
         for _ in range(120):
             p.stepSimulation()
 
-        self.bootstrap_steps = 80
-        self.prev_x = 0
+        self.prev_x             = float(p.getBasePositionAndOrientation(self.robot)[0][0])
+        self.prev_action        = np.zeros(2, dtype=np.float32)
+        self.wall_contact_steps = 0
+        self.current_step       = 0
+        self.prev_checkpoint    = 0
 
         return self._get_obs(), {}
 
+    def _build_road(self):
+        slabs = [
+            (0,   25,  1.0),
+            (25,  50,  1.0),
+            (50,  75,  WALL_W_S3),
+            (75,  100, WALL_W_S4),
+            (100, 125, WALL_W_S5),
+        ]
+        for xs, xe, hw in slabs:
+            half_len = (xe - xs) / 2.0
+            cx = xs + half_len
+            col = p.createCollisionShape(
+                p.GEOM_BOX, halfExtents=[half_len, hw, ROAD_THICKNESS / 2])
+            vis = p.createVisualShape(
+                p.GEOM_BOX, halfExtents=[half_len, hw, ROAD_THICKNESS / 2],
+                rgbaColor=[0.55, 0.42, 0.20, 1.0])
+            p.createMultiBody(0, col, vis, basePosition=[cx, 0.0, ROAD_Z_CENTER])
 
-    # ================= FLOOR =================
-    def _create_floor(self):
+    def _bump_params(self):
+        """Return (rng, fx_range, fy_range, amp_range) for current level."""
+        if self.random_level == 0:
+            return np.random.default_rng(42), (2.5, 2.5), (2.5, 2.5), (0.5, 0.5)
+        elif self.random_level == 1:
+            return np.random.default_rng(), (2.0, 3.0), (2.0, 3.0), (0.4, 0.6)
+        else:
+            return np.random.default_rng(), (1.5, 4.0), (1.5, 4.0), (0.3, 0.7)
 
-        size = 512
-        length = self.length
+    def _build_bumps(self):
+        MAX_BUMP_H = 0.035
+        RES        = 64
+        zones = [
+            (25,  50,  1.0,       1.0),
+            (75,  100, WALL_W_S4, 1.4),
+            (100, 125, WALL_W_S5, 1.8),
+        ]
 
-        heightfield = np.zeros(size * size)
+        rng, fxr, fyr, ampr = self._bump_params()
 
-        for i in range(size):
-            for j in range(size):
+        for xs, xe, hw, amp_scale in zones:
+            lx, ly = float(xe - xs), float(hw * 2)
+            cx = xs + lx / 2.0
+            XX, YY = np.meshgrid(np.linspace(0, 1, RES), np.linspace(0, 1, RES), indexing='ij')
 
-                x_ratio = i / size
+            h = np.zeros((RES, RES))
+            for _ in range(4):
+                fx, fy = rng.uniform(*fxr), rng.uniform(*fyr)
+                amp = rng.uniform(*ampr) * amp_scale
+                h += amp * np.sin(fx*2*np.pi*XX + rng.uniform(0, 2*np.pi)) * \
+                           np.sin(fy*2*np.pi*YY + rng.uniform(0, 2*np.pi))
 
-                if x_ratio < 0.3:
-                    slope = 0
-                elif x_ratio < 0.6:
-                    slope = 0.002 * (i - size * 0.3)
-                else:
-                    slope = 0.006 * (i - size * 0.6)
+            h -= h.min()
+            if h.max() > 1e-6:
+                h = h / h.max() * MAX_BUMP_H
 
-                h1 = 0.015 * np.sin(i * 0.15)
-                h2 = 0.015 * np.cos(j * 0.15)
+            col = p.createCollisionShape(
+                p.GEOM_HEIGHTFIELD, meshScale=[lx/(RES-1), ly/(RES-1), 1.0],
+                heightfieldData=h.flatten().tolist(), numHeightfieldRows=RES, numHeightfieldColumns=RES)
+            body = p.createMultiBody(0, col, basePosition=[cx, 0.0, ROAD_Z_TOP])
+            p.changeVisualShape(body, -1, rgbaColor=[0.4, 0.28, 0.14, 1.0])
 
-                heightfield[i * size + j] = slope + h1 + h2
+    def _build_walls(self):
+        specs = [(50, 75, WALL_W_S3), (75, 100, WALL_W_S4), (100, 125, WALL_W_S5)]
+        self.wall_ids = []
+        for xs, xe, ihw in specs:
+            half_len, cx = (xe - xs) / 2.0, xs + (xe - xs) / 2.0
+            cz = ROAD_Z_TOP + WALL_HEIGHT
+            for sign in (-1, +1):
+                cy = sign * (ihw + WALL_THICK)
+                col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[half_len, WALL_THICK, WALL_HEIGHT])
+                wid = p.createMultiBody(0, col, basePosition=[cx, cy, cz])
+                p.changeVisualShape(wid, -1, rgbaColor=[0.7, 0.1, 0.1, 1.0]) 
+                self.wall_ids.append(wid)
 
-        terrain = p.createCollisionShape(
-            shapeType=p.GEOM_HEIGHTFIELD,
-            meshScale=[length/size, 5.0/size, 1.0],
-            heightfieldData=heightfield,
-            numHeightfieldRows=size,
-            numHeightfieldColumns=size
-        )
+    def _build_finish_line(self):
+        col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.1, WALL_W_S5, 0.4])
+        p.createMultiBody(0, col, basePosition=[FINISH_X, 0.0, ROAD_Z_TOP + 0.4])
 
-        body = p.createMultiBody(0, terrain)
-        p.changeVisualShape(body, -1, rgbaColor=[0.45, 0.30, 0.15, 1])
-
-
-    # ================= TUNNEL =================
-    def _create_tunnel(self):
-
-        length = self.length
-        segments = 160
-        rings = 32
-        radius = 1.6
-
-        vertices = []
-        indices = []
-
-        for i in range(segments + 1):
-            x = i * (length / segments)
-
-            for j in range(rings):
-                angle = (j / rings) * 2 * np.pi
-                y = radius * np.cos(angle)
-                z = radius * np.sin(angle)
-
-                vertices.append([x, y, z])
-
-        for i in range(segments):
-            for j in range(rings):
-                nj = (j + 1) % rings
-
-                v0 = i * rings + j
-                v1 = i * rings + nj
-                v2 = (i + 1) * rings + j
-                v3 = (i + 1) * rings + nj
-
-                indices += [v0, v2, v1]
-                indices += [v1, v2, v3]
-
-        mesh = p.createCollisionShape(
-            shapeType=p.GEOM_MESH,
-            vertices=vertices,
-            indices=indices
-        )
-
-        visual = p.createVisualShape(
-            shapeType=p.GEOM_MESH,
-            vertices=vertices,
-            indices=indices,
-            rgbaColor=[0.5, 0.35, 0.2, 1]
-        )
-
-        p.createMultiBody(0, mesh, visual, basePosition=[0, 0, 1.0])
-
-
-    # ================= 🔴 FINISH LINE =================
-    def _create_finish_line(self):
-
-        thickness = 0.1
-        width = 4.0
-        height = 0.05
-
-        visual = p.createVisualShape(
-            shapeType=p.GEOM_BOX,
-            halfExtents=[thickness, width/2, height],
-            rgbaColor=[1, 0, 0, 1]  # 🔴 RED
-        )
-
-        collision = p.createCollisionShape(
-            shapeType=p.GEOM_BOX,
-            halfExtents=[thickness, width/2, height]
-        )
-
-        p.createMultiBody(
-            baseMass=0,
-            baseCollisionShapeIndex=collision,
-            baseVisualShapeIndex=visual,
-            basePosition=[self.finish_x, 0, 0.05]
-        )
 
 
     def _get_joint_map(self):
-        return {
-            p.getJointInfo(self.robot, i)[1].decode(): i
-            for i in range(p.getNumJoints(self.robot))
-        }
-
+        return {p.getJointInfo(self.robot, i)[1].decode(): i for i in range(p.getNumJoints(self.robot))}
 
     def _all_wheels(self):
-        return [
-            self.joint_map["wheel_left_front_joint"],
-            self.joint_map["wheel_left_rear_joint"],
-            self.joint_map["wheel_right_front_joint"],
-            self.joint_map["wheel_right_rear_joint"],
-        ]
-
+        return [self.joint_map[f"wheel_{side}_{pos}_joint"] 
+                for side in ["left", "right"] for pos in ["front", "rear"]]
 
     def _get_obs(self):
         pos, orn = p.getBasePositionAndOrientation(self.robot)
         lin_vel, ang_vel = p.getBaseVelocity(self.robot)
-        roll, pitch, yaw = p.getEulerFromQuaternion(orn)
+        roll, pitch, _ = p.getEulerFromQuaternion(orn)
+        return np.array([pos[0], pos[1], pos[2], roll, pitch, lin_vel[0], lin_vel[1], ang_vel[2]], dtype=np.float32)
 
-        return np.array([
-            pos[0], pos[1], pos[2],
-            roll, pitch,
-            lin_vel[0], lin_vel[1],
-            ang_vel[2]
-        ], dtype=np.float32)
 
 
     def step(self, action):
 
-        action = np.clip(action, -1, 1)
-        left, right = action
+        action = np.clip(action, -1.0, 1.0)
+        delta  = np.clip(action - self.prev_action, -TORQUE_RAMP, TORQUE_RAMP)
+        action = np.clip(self.prev_action + delta, -1.0, 1.0)
 
-        if self.bootstrap_steps > 0:
-            left = right = 0.3
-            self.bootstrap_steps -= 1
-
-        torque_scale = 120
-
-        for i, j in enumerate(self._all_wheels()):
+        left, right = float(action[0]), float(action[1])
+        wheels = self._all_wheels()
+        for i, j in enumerate(wheels):
             torque = left if i < 2 else right
-            p.setJointMotorControl2(
-                self.robot,
-                j,
-                p.TORQUE_CONTROL,
-                force=torque * torque_scale
-            )
+            p.setJointMotorControl2(self.robot, j, p.TORQUE_CONTROL, force=torque * TORQUE_SCALE)
 
-        for _ in range(4):
+        for _ in range(8):
             p.stepSimulation()
 
-        # follow camera
-        if self.render:
-            pos, _ = p.getBasePositionAndOrientation(self.robot)
-            p.resetDebugVisualizerCamera(
-                cameraDistance=5,
-                cameraYaw=0,
-                cameraPitch=-20,
-                cameraTargetPosition=pos
-            )
-
         obs = self._get_obs()
+        x, y, z, roll, pitch, vx, vy, yaw_rate = obs
 
-        x = obs[0]
-        roll, pitch = obs[3], obs[4]
-
-        # 🔥 DIRECTIONAL REWARD
-        forward_reward = (x - self.prev_x)
+        forward = x - self.prev_x
         self.prev_x = x
-        
-        velocity_rew = 0.05*obs[5]
+        action_delta = float(np.sum(np.abs(action - self.prev_action)))
+        self.prev_action = action.copy()
 
-        reward = forward_reward * 3 + velocity_rew
-        reward -= 0.25 * (abs(roll) + abs(pitch))
-        reward -= 0.01
 
-        done = False
-        truncated = False
+        contacts = p.getContactPoints(bodyA=self.robot)
+        wall_contacts = [c for c in contacts if c[2] in self.wall_ids]
+        n_wall = len(wall_contacts)
 
-        # 🎯 GOAL REWARD (STRONG BUT SAFE)
-        if x > self.finish_x:
-            reward += 100
+        if n_wall > 0:
+            self.wall_contact_steps += 1
+        else:
+            self.wall_contact_steps = 0
+
+        wall_pen = -min(50.0, (WALL_HIT_ONCE * n_wall + WALL_HIT_ACCUM * self.wall_contact_steps))
+
+        done = truncated = False
+        if n_wall > 3: 
+            wall_pen -= WALL_HARD_FAIL
             done = True
 
-        if abs(roll) > 1.2 or abs(pitch) > 1.2:
+
+        reward = (
+            FORWARD_SCALE   * forward -
+            LATERAL_SCALE   * abs(y) -
+            STABILITY_SCALE * (abs(roll) + abs(pitch)) -
+            YAW_RATE_SCALE  * abs(yaw_rate) -
+            ACTION_SMOOTH   * action_delta +
+            SURVIVAL_BONUS +
+            wall_pen
+        )
+
+        if abs(forward) < 0.002: reward -= STALL_PENALTY
+        if vx < 0.05: reward -= 0.3 * max(0.0, 0.05 - vx)
+
+
+        ckpt = int(max(x, 0) // 10)
+        if ckpt > self.prev_checkpoint:
+            reward += 10.0
+            self.prev_checkpoint = ckpt
+
+
+        reward = float(np.clip(reward, -50.0, 100.0))
+
+        if x >= FINISH_X:
+            reward += FINISH_REWARD
             done = True
+        elif z < 1.2 or abs(roll) > 1.3 or abs(pitch) > 1.3:
+            reward -= FALL_PENALTY
+            done = True
+
+        self.current_step += 1
+        if self.current_step >= MAX_STEPS:
+            truncated = True
 
         return obs, reward, done, truncated, {}
-
 
     def close(self):
         p.disconnect()
