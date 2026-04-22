@@ -184,6 +184,7 @@ class Segment:
     def terrain_s_at(self, along: float) -> float:
         return self.s_start + along
 
+
 # -----------------------------------------------------------------------------
 # TOPOLOGY
 # root -> 3 branches in same plane -> each branch has a pitched tail
@@ -392,7 +393,24 @@ def build_rocks(stage, segments):
         cube.CreateDisplayColorAttr([(0.28, 0.22, 0.18)])
         xf = UsdGeom.Xformable(cube.GetPrim())
         xf.AddTranslateOp().Set(Gf.Vec3d(float(pos[0]), float(pos[1]), float(pos[2])))
-        xf.AddScaleOp().Set(Gf.Vec3d(0.12, 0.10, 0.07))
+        # xf.AddScaleOp().Set(Gf.Vec3d(0.12, 0.10, 0.07))    # older small rocks
+
+        # scale factor (tune between 3.0 → 4.0)
+        scale_factor = 3.5
+
+        sx = 0.12 * scale_factor
+        sy = 0.10 * scale_factor
+        sz = 0.07 * scale_factor
+
+        # prevent breaking tunnel walls
+        max_w = TUNNEL_RADIUS * 0.75
+        sx = min(sx, max_w)
+        sy = min(sy, max_w)
+
+        # push slightly into ground so they don't float
+        pos[2] -= sz * 0.25
+
+        xf.AddScaleOp().Set(Gf.Vec3d(sx, sy, sz))
 
     print("[World] Rocks placed")
 
