@@ -1,9 +1,3 @@
-"""
-Run by using the following command from `IsaacLab` directory: 
-
-./isaaclab.sh -p "path/to/isaac_multi_tunnel_preview.py"
-"""
-
 from isaacsim import SimulationApp
 
 # -----------------------------------------------------------------------------
@@ -222,14 +216,15 @@ def build_segments():
         )
         next_s_branch_end = next_s + BRANCH_LENGTH
 
-        tail_dir = apply_pitch(branch.direction, tail_pitch_deg)
+        # tail_dir = apply_pitch(branch.direction, tail_pitch_deg)
+        tail_dir = branch.direction.copy()
         tail = Segment(
             start=branch.end,
             direction=tail_dir,
             length=TAIL_LENGTH,
             name=f"{branch_name}_tail",
             s_start=next_s_branch_end,
-            pitch_deg=tail_pitch_deg,
+            # pitch_deg=tail_pitch_deg,
         )
 
         segments.extend([branch, tail])
@@ -295,25 +290,48 @@ def build_tunnel(stage, seg: Segment, prim_path: str, segs_per_m=TUNNEL_SEGS_PER
     _build_mesh_from_rings(stage, prim_path, rings_points, color=color, double_sided=True)
 
 def build_floor(stage, seg: Segment, prim_path: str):
-    """
-    Floor is a thin strip following the same s-profile across all branches.
-    Terrain height is reused identically for the whole network.
-    """
-    # Build a thin strip with the same segment direction, sitting on the terrain profile.
-    cube = UsdGeom.Cube.Define(stage, prim_path)
-    cube.CreateSizeAttr(1.0)
-    cube.CreateDisplayColorAttr([(0.40, 0.26, 0.12)])
+    SX = 80   # along segment
+    SY = 16   # across width
 
-    # Midpoint of the segment in world space, but floor sits at terrain height.
-    mid_along = seg.length * 0.5
-    center_xy = seg.point(mid_along)
-    s_mid = seg.terrain_s_at(mid_along)
-    z_mid = terrain_height_at(s_mid) + FLOOR_THICK * 0.5
+    verts = []
+    indices = []
+    counts = []
 
-    xf = UsdGeom.Xformable(cube.GetPrim())
-    xf.AddScaleOp().Set(Gf.Vec3f(float(seg.length * 0.5), float(FLOOR_WIDTH * 0.5), float(FLOOR_THICK * 0.5)))
-    xf.AddOrientOp().Set(seg.quat())
-    xf.AddTranslateOp().Set(Gf.Vec3d(float(center_xy[0]), float(center_xy[1]), float(z_mid)))
+    for i in range(SX):
+        along = (i / (SX - 1)) * seg.length
+        center = seg.point(along)
+
+        s_abs = seg.terrain_s_at(along)
+        base_z = terrain_height_at(s_abs)
+
+        for j in range(SY):
+            frac = j / (SY - 1)
+            lateral = (frac - 0.5) * FLOOR_WIDTH
+
+            side = _norm(np.array([-seg.direction[1], seg.direction[0], 0.0]))
+            p = center + side * lateral
+
+            # 🔥 THIS is your bumpiness
+            z = base_z + 0.01 * math.sin(i * 0.3 + j * 0.8)
+
+            verts.append(Gf.Vec3f(float(p[0]), float(p[1]), float(z)))
+
+    # faces
+    for i in range(SX - 1):
+        for j in range(SY - 1):
+            v0 = i * SY + j
+            v1 = i * SY + (j + 1)
+            v2 = (i + 1) * SY + j
+            v3 = (i + 1) * SY + (j + 1)
+
+            indices += [v0, v1, v3, v2]
+            counts.append(4)
+
+    mesh = UsdGeom.Mesh.Define(stage, prim_path)
+    mesh.CreatePointsAttr(verts)
+    mesh.CreateFaceVertexCountsAttr(counts)
+    mesh.CreateFaceVertexIndicesAttr(indices)
+    mesh.CreateDisplayColorAttr([(0.32, 0.20, 0.10)])
 
 def build_hub_patch(stage):
     """
