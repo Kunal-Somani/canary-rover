@@ -355,69 +355,63 @@ def build_floor(stage, seg: Segment, prim_path: str):
 
 def build_soil_mesh(stage, segments):
     """
-    Creates three continuous meshes per segment:
-      - Left bank (thick outward, up to 60% tunnel height)
-      - Right bank (same)
-      - Underfloor fill (below tunnel, between the banks)
-    Soil starts from the very beginning of the tunnel.
-    Underfloor depth = tunnel radius (1.6 m).
+    Smooth soil embankments with a slightly rounded top to avoid boxy look.
     """
     stage.DefinePrim("/World/Soil", "Xform")
 
     radius = TUNNEL_RADIUS
     center_z = TUNNEL_AXIS_Z
-    bottom_z = center_z - radius
-    total_height = 2.0 * radius
-    bank_height_target = 0.6 * total_height
-    bank_thickness = 1.6 * 5.0          # 8.0 m outward
-    underfloor_depth = TUNNEL_RADIUS    # = 1.6 m below terrain
+    bank_height_target = 0.6 * (2.0 * radius)
+    bank_thickness = 1.6 * 5.0          # 8.0 m
+    underfloor_depth = TUNNEL_RADIUS    # 1.6 m
 
-    # Grid resolution
-    SX = 80                     # along segment
-    SY_bank = 20                # across thickness (for smooth wide bank)
-    SY_under = 16               # across width for underfloor
+    SX = 80          # along segment
+    SY_bank = 32     # increased for smoother top
+    SY_under = 20
 
     for seg in segments:
-        # Soil covers the entire segment length (no open entrance)
         start_along = 0.0
         end_along = seg.length
-
         if end_along <= start_along:
             continue
 
-        # Side direction (perpendicular to tunnel axis, horizontal)
         side_dir = _norm(np.array([-seg.direction[1], seg.direction[0], 0.0], dtype=float))
 
         # -----------------------------------------------------------------
-        # 1. LEFT BANK (side_sign = +1) and RIGHT BANK (side_sign = -1)
+        # BANKS (left and right)
         # -----------------------------------------------------------------
         for side_sign, side_name in [(1, "L"), (-1, "R")]:
             verts = []
             indices = []
             counts = []
 
-            # Precompute top heights along the segment (varies with terrain)
-            top_heights = []
+            # Precompute top heights along the segment (without thickness variation yet)
+            top_z_along = []
             for i in range(SX):
                 along = start_along + (i / (SX - 1)) * (end_along - start_along)
                 s_abs = seg.terrain_s_at(along)
                 base_z = terrain_height_at(s_abs)
                 max_allowed = center_z + radius
                 top_z = min(base_z + bank_height_target, max_allowed)
-                top_z += 0.005 * math.sin(i * 0.3)   # small bump
-                top_heights.append(top_z)
+                # Small bump along length only
+                top_z += 0.008 * math.sin(i * 0.4)
+                top_z_along.append(top_z)
 
             for i in range(SX):
                 along = start_along + (i / (SX - 1)) * (end_along - start_along)
                 center = seg.point(along)
                 base_z = terrain_height_at(seg.terrain_s_at(along))
-                top_z = top_heights[i]
+                top_z_base = top_z_along[i]
 
                 for j in range(SY_bank):
-                    frac = j / (SY_bank - 1)
+                    frac = j / (SY_bank - 1)   # 0 = inner edge, 1 = outer edge
                     dist = radius + frac * bank_thickness
                     offset = side_dir * (side_sign * dist)
                     p = center + offset
+
+                    # Smooth curvature: top is slightly higher in the middle (convex)
+                    curve = 1.0 - 4.0 * (frac - 0.5) * (frac - 0.5)   # parabola, max at 0.5
+                    top_z = top_z_base + 0.03 * curve   # raise middle by 3 cm
 
                     verts.append(Gf.Vec3f(float(p[0]), float(p[1]), float(base_z)))
                     verts.append(Gf.Vec3f(float(p[0]), float(p[1]), float(top_z)))
@@ -427,20 +421,21 @@ def build_soil_mesh(stage, segments):
 
             for i in range(SX - 1):
                 for j in range(SY_bank - 1):
+                    # Side wall
                     v0 = idx(i, j, 0)
                     v1 = idx(i, j, 1)
                     v2 = idx(i+1, j, 1)
                     v3 = idx(i+1, j, 0)
                     indices += [v0, v1, v2, v3]
                     counts.append(4)
-
+                    # Top surface
                     v0 = idx(i, j, 1)
                     v1 = idx(i, j+1, 1)
                     v2 = idx(i+1, j+1, 1)
                     v3 = idx(i+1, j, 1)
                     indices += [v0, v1, v2, v3]
                     counts.append(4)
-
+                    # Bottom (optional)
                     v0 = idx(i, j, 0)
                     v1 = idx(i+1, j, 0)
                     v2 = idx(i+1, j+1, 0)
@@ -456,12 +451,11 @@ def build_soil_mesh(stage, segments):
             mesh.CreateDisplayColorAttr([(0.45, 0.30, 0.18)])
 
         # -----------------------------------------------------------------
-        # 2. UNDERFLOOR FILL (below the tunnel, spanning between banks)
+        # UNDERFLOOR (unchanged, but ensure it connects smoothly)
         # -----------------------------------------------------------------
         verts = []
         indices = []
         counts = []
-
         under_width = 2.0 * (radius + bank_thickness)
 
         for i in range(SX):
@@ -469,13 +463,13 @@ def build_soil_mesh(stage, segments):
             center = seg.point(along)
             terrain_z = terrain_height_at(seg.terrain_s_at(along))
             bottom_z_fill = terrain_z - underfloor_depth
+            bottom_z_fill += 0.005 * math.sin(i * 0.5)   # tiny waviness
 
             for j in range(SY_under):
                 frac = j / (SY_under - 1)
                 lateral = (frac - 0.5) * under_width
                 side = _norm(np.array([-seg.direction[1], seg.direction[0], 0.0]))
                 p = center + side * lateral
-
                 verts.append(Gf.Vec3f(float(p[0]), float(p[1]), float(bottom_z_fill)))
                 verts.append(Gf.Vec3f(float(p[0]), float(p[1]), float(terrain_z)))
 
@@ -490,14 +484,12 @@ def build_soil_mesh(stage, segments):
                 v3 = idx_under(i+1, j, 0)
                 indices += [v0, v1, v2, v3]
                 counts.append(4)
-
                 v0 = idx_under(i, j, 1)
                 v1 = idx_under(i, j+1, 1)
                 v2 = idx_under(i+1, j+1, 1)
                 v3 = idx_under(i+1, j, 1)
                 indices += [v0, v1, v2, v3]
                 counts.append(4)
-
                 v0 = idx_under(i, j, 0)
                 v1 = idx_under(i+1, j, 0)
                 v2 = idx_under(i+1, j+1, 0)
@@ -512,7 +504,7 @@ def build_soil_mesh(stage, segments):
         mesh.CreateDoubleSidedAttr(True)
         mesh.CreateDisplayColorAttr([(0.45, 0.30, 0.18)])
 
-    print("[World] Soil mesh built (full coverage, underfloor depth = tunnel radius)")
+    print("[World] Soil mesh built with smooth, non‑boxy embankments")
 
 def _build_circular_cap(stage, seg, prim_path, n_segs=TUNNEL_RINGS):
     """Filled circular disk sealing the far end of a tunnel bore."""
