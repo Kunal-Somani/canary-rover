@@ -23,12 +23,18 @@ INNER_WIDTH = 3.0
 INNER_HEIGHT = 4.0     
 TUNNEL_AXIS_Z = 0.0
 
-# Junction dimensions based on outer block width
-J_HALF = OUTER_WIDTH / 2.0  # 2.0 meters
+J_HALF = OUTER_WIDTH / 2.0 
 
 TUNNEL_RINGS = 16
 TUNNEL_SEGS_PER_M = 3
 WORLD_LENGTH = 60.0
+
+# EXACT 90-DEGREE BRANCHES FOR A PERFECT CROSS INTERSECTION
+BRANCH_SPECS = [
+    ("left",  +90.0),
+    ("mid",     0.0),
+    ("right", -90.0),
+]
 
 np.random.seed(42)
 TERRAIN_SAMPLES = 300
@@ -42,7 +48,6 @@ _terrain_h = (
 )
 
 def terrain_height_at(pt):
-    # Base terrain height based on distance from origin
     dist = np.linalg.norm(pt[:2])
     idx = max(0.0, min(dist, WORLD_LENGTH - 0.01)) / WORLD_LENGTH * (TERRAIN_SAMPLES - 1)
     i0, i1 = int(idx), min(int(idx) + 1, TERRAIN_SAMPLES - 1)
@@ -84,22 +89,26 @@ def yaw_from_quat_wxyz(q):
     w, x, y, z = map(float, q)
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
-# ---------------------------------------------------------
-# EXPLICIT 90-DEGREE SEGMENT LOGIC
-# Separates Pathing (for the rover) from Rendering (for the meshes)
-# ---------------------------------------------------------
+def rotate_yaw(direction: np.ndarray, angle_deg: float) -> np.ndarray:
+    theta = math.radians(angle_deg)
+    R = np.array(
+        [
+            [math.cos(theta), -math.sin(theta), 0.0],
+            [math.sin(theta),  math.cos(theta), 0.0],
+            [0.0,              0.0,             1.0],
+        ],
+        dtype=float,
+    )
+    return R @ direction
+
 class Segment:
     def __init__(self, name, p_start, p_dir, p_length, r_start, r_length):
         self.name = name
-        
-        # Physics / Pathing data (Meeting perfectly at the junction center)
         self.p_start = np.array(p_start, dtype=float)
         self.direction = _norm(np.array(p_dir, dtype=float))
         self.p_length = float(p_length)
         self.p_end = self.p_start + self.direction * self.p_length
         self.right, self.up, _ = _local_frame(self.direction)
-        
-        # Rendering data (Stopping at the edges of the junction to prevent overlap)
         self.r_start = np.array(r_start, dtype=float)
         self.r_length = float(r_length)
 
@@ -114,15 +123,13 @@ class Segment:
 
 def build_segments():
     segments = []
-    JX, JY = 15.0 + J_HALF, 0.0 # Center of junction is at X=17, Y=0
+    JX, JY = 15.0 + J_HALF, 0.0
 
-    # 1. Root (Main) Tunnel
     segments.append(Segment("root", 
         p_start=[0, 0, 0], p_dir=[1, 0, 0], p_length=JX,
         r_start=[0, 0, 0], r_length=JX - J_HALF
     ))
     
-    # 2. Middle Branch (Straight)
     segments.append(Segment("mid_branch",
         p_start=[JX, JY, 0], p_dir=[1, 0, 0], p_length=15.0,
         r_start=[JX + J_HALF, JY, 0], r_length=15.0 - J_HALF
@@ -132,7 +139,6 @@ def build_segments():
         r_start=[JX + 15.0, JY, 0], r_length=10.0
     ))
 
-    # 3. Left Branch (Exactly +90 degrees)
     segments.append(Segment("left_branch",
         p_start=[JX, JY, 0], p_dir=[0, 1, 0], p_length=15.0,
         r_start=[JX, JY + J_HALF, 0], r_length=15.0 - J_HALF
@@ -142,7 +148,6 @@ def build_segments():
         r_start=[JX, JY + 15.0, 0], r_length=10.0
     ))
 
-    # 4. Right Branch (Exactly -90 degrees)
     segments.append(Segment("right_branch",
         p_start=[JX, JY, 0], p_dir=[0, -1, 0], p_length=15.0,
         r_start=[JX, JY - J_HALF, 0], r_length=15.0 - J_HALF
@@ -155,13 +160,11 @@ def build_segments():
     return segments
 
 def build_tunnel_mesh(stage, seg: Segment, prim_path: str):
-    """ Builds the Square Outer / Oval Inner shell for a segment """
     if seg.r_length <= 0: return
     
     n_long = max(4, int(math.ceil(seg.r_length * TUNNEL_SEGS_PER_M)))
     verts, f_counts, f_indices = [], [], []
 
-    # Define the 2D Cross Section
     points_2d = []
     points_2d.append((-OUTER_WIDTH/2, 0.0))
     points_2d.append((-OUTER_WIDTH/2, OUTER_HEIGHT))
@@ -169,7 +172,7 @@ def build_tunnel_mesh(stage, seg: Segment, prim_path: str):
     points_2d.append((OUTER_WIDTH/2, 0.0))
     
     for i in range(TUNNEL_RINGS + 1):
-        t = math.pi * (1.0 - (i / TUNNEL_RINGS)) # Sweeps from Pi down to 0
+        t = math.pi * (1.0 - (i / TUNNEL_RINGS))
         x = (INNER_WIDTH / 2.0) * math.cos(t)
         z = INNER_HEIGHT * math.sin(t)
         points_2d.append((x, z))
@@ -206,7 +209,6 @@ def build_tunnel_mesh(stage, seg: Segment, prim_path: str):
     UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr("none")
 
 def build_bumpy_floor(stage, seg: Segment, prim_path: str):
-    """ Builds the collision-enabled bumpy floor for a segment """
     if seg.r_length <= 0: return
     
     SX, SY = max(10, int(seg.r_length * 4)), 16
@@ -221,8 +223,6 @@ def build_bumpy_floor(stage, seg: Segment, prim_path: str):
             lateral = ((j / (SY - 1)) - 0.5) * INNER_WIDTH
             side = seg.right
             p = center + side * lateral
-            
-            # Complex wave ensuring slopes are < 20 degrees
             bump = 0.06 * math.sin(along * 4.0 + lateral * 2.0) + 0.03 * math.cos(along * 8.0 - lateral * 4.0)
             z = base_z + bump
             verts.append(Gf.Vec3f(float(p[0]), float(p[1]), float(z)))
@@ -250,7 +250,6 @@ def build_bumpy_floor(stage, seg: Segment, prim_path: str):
     physx_coll.CreateRestOffsetAttr(0.001)
 
 def build_junction_caps(stage):
-    """ Creates a perfect flat square ceiling and floor to seal the 4-way intersection """
     JX, JY = 15.0 + J_HALF, 0.0
     base_z = terrain_height_at([JX, JY, 0])
 
@@ -270,7 +269,6 @@ def build_junction_caps(stage):
     xf_r.AddScaleOp().Set(Gf.Vec3f(OUTER_WIDTH, OUTER_WIDTH, 1.0))
 
 def build_solid_soil_blocks(stage):
-    """ Places 4 massive rock cubes in the exterior corners to 100% seal the environment """
     stage.DefinePrim("/World/Soil", "Xform")
     JX, JY = 15.0 + J_HALF, 0.0
     color = (0.25, 0.18, 0.12) 
@@ -284,8 +282,7 @@ def build_solid_soil_blocks(stage):
         xf.AddScaleOp().Set(Gf.Vec3f(sx, sy, sz))
         UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
 
-    S = 40.0 
-    H = 10.0 
+    S, H = 40.0, 10.0
     Z = terrain_height_at([JX, JY, 0]) + OUTER_HEIGHT / 2.0
 
     make_block("q1_front_left",  JX + J_HALF + S/2, JY + J_HALF + S/2, Z, S, S, H)
@@ -379,6 +376,8 @@ class RoverTraversal:
     def __init__(self, segments):
         self.seg_map = {s.name: s for s in segments}
         self.actions = []
+        self.total_dist = 0.0
+        self.cumulative_dist = 0.0
         
         self._add_drive("root", False)
         
@@ -407,14 +406,22 @@ class RoverTraversal:
         self._add_drive("root", True)
         
         self.idx, self.local_s = 0, 0.0
-        
-        # REQUESTED SPEEDS
         self.drive_speed = 1.0 
         self.turn_rate = 1.25
         self.turn_tolerance = 0.03
 
+    def current_action(self):
+        if self.idx < len(self.actions):
+            return self.actions[self.idx]
+        return None
+
     def _add_drive(self, seg_name, reverse):
-        self.actions.append({"kind": "drive", "segment": seg_name, "reverse": reverse})
+        seg = self.seg_map[seg_name]
+        drive_dist = seg.p_length
+        if "tail" in seg.name:
+            drive_dist = seg.p_length - 4.0
+        self.total_dist += drive_dist
+        self.actions.append({"kind": "drive", "segment": seg_name, "reverse": reverse, "dist": drive_dist})
 
     def _add_turn_to(self, seg_name, reverse):
         seg = self.seg_map[seg_name]
@@ -427,14 +434,15 @@ class RoverTraversal:
 
         if action["kind"] == "drive":
             seg, reverse = self.seg_map[action["segment"]], bool(action["reverse"])
-            
-            drive_dist = seg.p_length
-            if "tail" in seg.name:
-                drive_dist = seg.p_length - 4.0
+            drive_dist = action["dist"]
 
-            self.local_s += self.drive_speed * dt
+            step_dist = self.drive_speed * dt
+            self.local_s += step_dist
+            self.cumulative_dist += step_dist
+            
             is_done_segment = False
             if self.local_s >= drive_dist:
+                self.cumulative_dist -= (self.local_s - drive_dist)
                 self.local_s, is_done_segment = drive_dist, True
 
             s_eff = (drive_dist - self.local_s) if reverse else self.local_s
@@ -461,7 +469,8 @@ class RoverTraversal:
 
 def main():
     print("\n" + "=" * 72)
-    print("  CANARY ROVER — Isaac Sim 5.1.0  Perfect 90-Deg Junction")
+    print("  CANARY ROVER — Isaac Sim 5.1.0  Professional Mine Inspection")
+    print("  IMU (60Hz) | Fake LiDAR (60Hz) | Path Progress Tracker")
     print("=" * 72 + "\n")
 
     world = World(stage_units_in_meters=1.0)
@@ -469,6 +478,7 @@ def main():
     configure_stage(stage)
 
     segments = build_segments()
+
     for seg in segments:
         build_tunnel_mesh(stage, seg, f"/World/Tunnels/{seg.name}")
         build_bumpy_floor(stage, seg, f"/World/Floors/{seg.name}")
@@ -501,7 +511,6 @@ def main():
     while simulation_app.is_running():
         world.step(render=True)
         
-        # PLAY/PAUSE/STOP LOGIC 
         if world.is_stopped():
             controller = RoverTraversal(segments) 
             step = 0
@@ -515,15 +524,47 @@ def main():
             done = controller.step(rover, dt)
             step += 1
 
+            pos, quat = rover.get_world_pose()
+            yaw = yaw_from_quat_wxyz(quat)
+
             if step % 8 == 0:
-                pos, quat = rover.get_world_pose()
-                yaw = yaw_from_quat_wxyz(quat)
                 forward = np.array([math.cos(yaw), math.sin(yaw), 0.0], dtype=np.float32)
                 set_camera_view(eye=pos - forward * 3.0 + np.array([0.0, 0.0, 1.5], dtype=np.float32), target=pos + forward * 4.0)
 
             if step % 60 == 0:
-                pos, quat = rover.get_world_pose()
-                print(f"[Step {step:5d}] rover=({pos[0]:6.2f}, {pos[1]:6.2f}, {pos[2]:5.2f}) yaw={math.degrees(yaw_from_quat_wxyz(quat)):+6.1f}° action={controller.idx:02d}/{len(controller.actions)}")
+                current_speed = controller.drive_speed if not done and controller.current_action() and controller.current_action()["kind"] == "drive" else 0.0
+                
+                pitch = math.degrees(math.atan2(terrain_height_at([pos[0] + 0.1, pos[1], 0]) - terrain_height_at([pos[0] - 0.1, pos[1], 0]), 0.2))
+                roll = 2.5 * math.sin(step * 0.1) if current_speed > 0 else 0.0
+                
+                ax = 9.81 * math.sin(math.radians(pitch)) + np.random.normal(0, 0.02)
+                ay = -9.81 * math.sin(math.radians(roll)) + np.random.normal(0, 0.02)
+                az = 9.81 * math.cos(math.radians(pitch)) * math.cos(math.radians(roll)) + np.random.normal(0, 0.02)
+                
+                gx = np.random.normal(0, 0.005)
+                gy = np.random.normal(pitch * 0.05, 0.005) if current_speed > 0 else np.random.normal(0, 0.005)
+                gz = np.random.normal(0.02, 0.005) if current_speed > 0 else np.random.normal(0, 0.005)
+                
+                slope = math.degrees(math.atan2(math.sqrt(ax**2 + ay**2), az))
+                rpm = (current_speed / 0.06) * (60 / (2 * math.pi))
+
+                lidar_f = 12.0
+                lidar_l = round((INNER_WIDTH / 2.0) + np.random.normal(0, 0.015), 2)
+                lidar_r = round((INNER_WIDTH / 2.0) + np.random.normal(0, 0.015), 2)
+
+                progress_pct = min(100.0, (controller.cumulative_dist / controller.total_dist) * 100.0) if controller.total_dist > 0 else 0.0
+                prog_blocks = int(progress_pct // 5)
+                bar = "█" * prog_blocks + "░" * (20 - prog_blocks)
+
+                print(f"┌─ Step {step:5d} ──────────────────────────────────────────────────┐")
+                print(f"│  [POS] x={pos[0]:6.2f}m  y={pos[1]:6.2f}m  z={pos[2]:+.3f}m  speed={current_speed:.2f}m/s")
+                print(f"│  [IMU] pitch={pitch:+.2f}deg  roll={roll:+.2f}deg  slope={slope:.2f}deg")
+                print(f"│  [ACC] ax={ax:+.2f}  ay={ay:+.2f}  az={az:+.2f} m/s^2")
+                print(f"│  [GYR] wx={gx:+.3f}  wy={gy:+.3f}  wz={gz:+.3f} rad/s")
+                print(f"│  [LDR] F={lidar_f:.1f}m  L={lidar_l:.2f}m  R={lidar_r:.2f}m")
+                print(f"│  [ENC] FL/RL/FR/RR: {rpm:+.1f} RPM  (wheel r=6cm)")
+                print(f"│  [PRG] [{bar}] {progress_pct:5.1f}%  ({controller.cumulative_dist:.1f}/{controller.total_dist:.1f}m)")
+                print(f"└───────────────────────────────────────────────────────────────┘\n")
 
             if done and not mission_complete:
                 print("\n*** Traversal complete! Press Stop in the UI to reset the rover. ***\n")
