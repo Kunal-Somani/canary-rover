@@ -5,3 +5,12 @@ canary_rover_ws/log/
 *.pyc
 *.egg-info/
 .vscode/
+project_imagesa/
+WhatsApp Image 2026*.png
+Copy of Sample_PPT.pptx
+Copy of Sample_PPT.pptx (2).pdf
+WhatsApp Image 2026-03-29 at 11.25.12.jpeg
+*.zip
+isaac-SLAM/ros2_ws/build/
+isaac-SLAM/ros2_ws/install/
+isaac-SLAM/ros2_ws/log/
