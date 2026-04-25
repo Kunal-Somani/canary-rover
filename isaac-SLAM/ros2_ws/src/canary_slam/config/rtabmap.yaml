@@ -1,0 +1,56 @@
+# RTAB-Map config — Canary Rover mine tunnel 3-D SLAM
+# LiDAR-only (no camera) — uses VLP-16 point cloud + ICP odometry
+
+rtabmap:
+  ros__parameters:
+
+    # --- Frames ---
+    frame_id:       base_link
+    odom_frame_id:  odom
+    map_frame_id:   map
+
+    # --- Topics ---
+    subscribe_scan_cloud: true
+    subscribe_odom:       true
+    subscribe_imu:        true
+
+    # --- Rate ---
+    Rtabmap/DetectionRate: "1.0"   # map update rate (Hz)
+
+    # --- Memory ---
+    Mem/IncrementalMemory:    "true"
+    Mem/InitWMWithAllNodes:   "false"
+    Mem/STMSize:              "30"   # short-term memory size
+
+    # --- Grid map (2-D projection) ---
+    Grid/3D:             "true"
+    Grid/RangeMax:       "8.0"
+    Grid/CellSize:       "0.10"
+    Grid/RayTracing:     "true"
+    Grid/GroundIsObstacle: "false"
+    Grid/MaxGroundHeight:  "0.15"   # cells below 15 cm = ground (free)
+    Grid/MinClusterSize:   "5"
+
+    # --- Point cloud filtering ---
+    # Voxel down-sample before mapping (speeds up in narrow tunnel)
+    cloud_voxel_size: 0.05          # 5 cm voxels for display map
+
+    # --- ICP loop closure ---
+    Icp/MaxCorrespondenceDistance: "0.3"
+    Icp/PointToPlane:              "true"
+    Icp/Iterations:                "30"
+    Icp/Epsilon:                   "0.001"
+
+    # --- Proximity detection (loop closure in tunnel) ---
+    Reg/Strategy:               "1"   # 0=Vis, 1=ICP, 2=VisICP
+    Reg/Force3DoF:              "false"
+    Vis/MinInliers:             "15"
+
+    # --- Optimisation ---
+    Optimizer/Strategy:         "1"   # 1=g2o  2=GTSAM
+    Optimizer/Iterations:       "20"
+    Optimizer/Robust:           "true"
+
+    # --- Logging ---
+    Rtabmap/TimeThr:            "0"   # 0 = no time limit per iteration
+    Rtabmap/MemoryThr:          "0"
