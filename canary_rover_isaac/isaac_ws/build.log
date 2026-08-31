@@ -1,8 +1,0 @@
-Starting >>> canary_bringup
-Finished <<< canary_bringup [0.72s]
-Starting >>> canary_slam
-Finished <<< canary_slam [0.78s]
-Starting >>> canary_visualizer
-Finished <<< canary_visualizer [0.72s]
-
-Summary: 3 packages finished [2.41s]
