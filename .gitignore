@@ -1,0 +1,18 @@
+# Jetson sshfs mount -- this is a live view of the Jetson's home directory,
+# not project source. Never commit its contents.
+jetson-files/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# SLAM run outputs (regenerated each run, not source)
+*.bin
+
+# Editor / OS cruft
+.DS_Store
+.vscode/
+.idea/
